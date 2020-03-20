@@ -1,0 +1,81 @@
+﻿@using StocksServer.Data
+@using StocksServer.Repositories.Interfaces
+
+@inject IFactoryRepository factoryRepository
+@inject IModalService ModalService
+
+@if (_factory != null)
+{
+    <p class="text-danger text-center">@_result</p>
+    <div class="simple-form">
+
+        <div class="form-group">
+            <label for="movie-name">Factory name</label>
+            <input @bind="@_factory.Name" type="text" class="form-control" id="movie-name" />
+        </div>
+        <button @onclick="@SaveChanges" class="btn btn-primary">Submit</button>
+        <button @onclick="@Cancel" class="btn btn-secondary">Cancel</button>
+    </div>
+}
+
+
+@code {
+
+    [CascadingParameter] ModalParameters Parameters { get; set; }
+
+    int _factoryId;
+    Factory _factory;
+    string _result;
+    bool _isEditing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isEditing = Parameters.Get<bool>("IsEditing");
+        if (_isEditing)
+        {
+            _factoryId = Parameters.Get<int>("FactoryId");
+            _factory = await factoryRepository.GetFactory(_factoryId).ConfigureAwait(false);
+        }
+        else
+        {
+            _factory = new Factory();
+        }
+
+    }
+
+    async Task SaveChanges()
+    {
+        if (_isEditing)
+        {
+            var result = await factoryRepository.UpdateFactory(_factory).ConfigureAwait(false);
+
+            if (result)
+            {
+                ModalService.Close(ModalResult.Ok<Factory>(_factory));
+            }
+            else
+            {
+                _result = "Could not update the factory name";
+            }
+        }
+        else
+        {
+            var result = await factoryRepository.InsertFactory(_factory).ConfigureAwait(false);
+
+            if (result.HasValue)
+            {
+                ModalService.Close(ModalResult.Ok<Factory>(_factory));
+            }
+            else
+            {
+                _result = "Could not update the factory name";
+            }
+        }
+    }
+
+    void Cancel()
+    {
+        ModalService.Cancel();
+    }
+
+}

@@ -1,0 +1,24 @@
+﻿@inject IModalService ModalService
+
+<p>Are you sure you want to this?</p>
+
+<div class="row">
+    <div class="col-12 text-right">
+        <button class="btn btn-success" @onclick="Ok">Yes</button>
+        <button class="btn btn-danger" @onclick="Cancel">No</button>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] ModalParameters Parameters { get; set; }
+
+    void Ok()
+    {
+        ModalService.Close(ModalResult.Ok<bool>(true));
+    }
+
+    void Cancel()
+    {
+        ModalService.Cancel();
+    }
+}

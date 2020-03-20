@@ -1,0 +1,101 @@
+﻿@using StocksServer.Data
+@using StocksServer.Repositories.Interfaces
+
+@inject IItemsRepository itemsRepository
+@inject IModalService ModalService
+
+@if (_item != null)
+{
+    <p class="text-danger text-center">@_result</p>
+    <EditForm Model="_item" OnValidSubmit="SaveChanges">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="form-row">
+            <div class="col">
+                <div class="form-group">
+                    <label>Item number</label>
+                    <input @bind="@_item.ItemNumber" type="text" class="form-control" disabled="@(_isEditing)" />
+                </div>
+                <div class="form-group">
+                    <label>Item description</label>
+                    <textarea @bind="@_item.ItemDescription" class="form-control"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Qty per blade</label>
+                    <input @bind="@_item.QtyPerBlade" type="number" class="form-control" />
+                </div>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary mr-3">Submit</button>
+        <button @onclick="@Cancel" type="button" class="btn btn-secondary">Cancel</button>
+    </EditForm>
+    @*<div class="row">
+        <div class="col text-right">
+            @if (_isEditing)
+            {
+                <button @onclick="@SaveChanges" type="submit" class="btn btn-primary mr-3">Submit</button>
+
+            }
+            else
+            {
+
+            }
+            <button @onclick="@Cancel" type="button" class="btn btn-secondary">Cancel</button>
+        </div>
+    </div>*@
+}
+
+
+@code {
+
+    [CascadingParameter] ModalParameters Parameters { get; set; }
+
+    string _itemNumber;
+    Item _item;
+    string _result;
+    bool _isEditing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isEditing = Parameters.Get<bool>("IsEditing");
+        if (_isEditing)
+        {
+            _itemNumber = Parameters.Get<string>("ItemNumber");
+            _item = await itemsRepository.GetItem(_itemNumber).ConfigureAwait(false);
+        }
+        else
+        {
+            _item = new Item();
+        }
+    }
+
+    async Task SaveChanges()
+    {
+        bool result;
+        if (_isEditing)
+        {
+            result = await itemsRepository.UpdateItem(_item).ConfigureAwait(false);
+        }
+        else
+        {
+            result = await itemsRepository.InsertItem(_item).ConfigureAwait(false);
+        }
+
+        if (result)
+        {
+            ModalService.Close(ModalResult.Ok<Item>(_item));
+        }
+        else
+        {
+            _result = "Could not update item";
+        }
+
+    }
+
+    void Cancel()
+    {
+        ModalService.Cancel();
+    }
+
+}

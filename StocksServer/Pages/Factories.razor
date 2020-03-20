@@ -1,0 +1,108 @@
+﻿@page "/factories"
+@using StocksServer.Data
+@using StocksServer.Repositories.Interfaces
+
+@inject IFactoryRepository factoryRepository
+@inject IModalService Modal
+
+<h1>Weather forecast</h1>
+
+<p>This component demonstrates fetching data from the server.</p>
+
+@if (_factories == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <table class="table table-sm">
+        <thead>
+            <tr>
+                <th>Id</th>
+                <th>Factory</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var factory in _factories)
+            {
+                <tr>
+                    <td>@factory.Id</td>
+                    <td>@factory.Name</td>
+                    <td>
+                        <button @onclick="@(() => EditFactory(factory.Id))" class="btn btn-primary">Edit Factory</button>
+                        <button @onclick="@(() => DeleteFactory(factory.Id))" class="btn btn-danger">Delete Factory</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <button class="btn btn-outline-dark" @onclick="AddNewFactory">Add new factory</button>
+}
+
+@code {
+    Factory[] _factories;
+    int _factoryToDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var factories = await factoryRepository.GetFactories().ConfigureAwait(false);
+        _factories = factories.ToArray();
+    }
+
+    void EditFactory(int id)
+    {
+        Modal.OnClose += ModalClosing;
+
+        var parameters = new ModalParameters();
+        parameters.Add("IsEditing", true);
+        parameters.Add("FactoryId", id);
+
+        Modal.Show<EditFactory>("Edit Factory", parameters);
+    }
+
+    void AddNewFactory()
+    {
+        Modal.OnClose += ModalClosing;
+
+        var parameters = new ModalParameters();
+        parameters.Add("IsEditing", false);
+
+        Modal.Show<EditFactory>("Edit Factory", parameters);
+    }
+
+    async Task DeleteFactory(int factoryId)
+    {
+        _factoryToDelete = factoryId;
+        Modal.OnClose += DeleteConfirmation;
+        Modal.Show<ConfirmationModal>("Delete factory?");
+    }
+
+    async void DeleteConfirmation(ModalResult result)
+    {
+        if (result.Cancelled) return;
+        await factoryRepository.DeleteFactory(_factoryToDelete).ConfigureAwait(false);
+        var factories = await factoryRepository.GetFactories().ConfigureAwait(false);
+
+        InvokeAsync(() => {
+            _factories = factories.ToArray();
+            StateHasChanged();
+        });
+    }
+
+    async void ModalClosing(ModalResult result)
+    {
+        if (result.Cancelled) return;
+
+        if (result.Data.GetType() == typeof(Factory))
+        {
+            var factories = await factoryRepository.GetFactories().ConfigureAwait(false);
+
+            InvokeAsync(() => {
+                _factories = factories.ToArray();
+                StateHasChanged();
+            });
+        }
+    }
+}

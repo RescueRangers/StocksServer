@@ -1,0 +1,265 @@
+﻿@page "/stocks"
+@page "/stocks/{id}"
+
+@using Newtonsoft.Json
+@using System.Text
+@using StocksServer.Data
+@using Blazor.FileReader
+@using System.IO
+@using StocksServer.Services
+
+@inject IStocksService stocksService
+@inject IFileReaderService fileReaderService
+@inject IToastService toastService
+@inject IJSRuntime js
+
+<h3>Stocks</h3>
+
+@if (_factories != null)
+{
+    <div class="row">
+        <div class="col-4">
+            <div class="input-group mb-3">
+                <div class="input-group-prepend">
+                    <label class="input-group-text" for="inputGroupSelect01">Factory</label>
+                </div>
+                <select class="custom-select" id="inputGroupSelect01" @onchange="OnFactoryChange">
+                    <option selected>Choose...</option>
+                    @foreach (var factory in _factories)
+                    {
+                        <option value="@factory.Id">@factory.Name</option>
+                    }
+                </select>
+            </div>
+        </div>
+        <div class="col-4">
+            <div class="input-group mb-3">
+                <div class="input-group-prepend">
+                    <label class="input-group-text" for="inputGroupSelect02">Week number</label>
+                </div>
+                <select class="custom-select" disabled="@_weeksInputDisabled" id="inputGroupSelect02" @onchange="OnWeekChange">
+                    <option selected>Choose...</option>
+                    @foreach (var week in _weeks)
+                    {
+                        <option value="@week.WeekNo">@week.WeekNo</option>
+                    }
+                </select>
+            </div>
+        </div>
+        <div class="col-4">
+            <div class="input-group mb-3">
+                <div class="input-group-prepend">
+                    <span class="input-group-text">Waste percent</span>
+                </div>
+                <input type="number" value="20" @onchange="OnWasteChange" step="0.01" min="0" max="100" class="form-control" aria-label="Percentage of parts wasted">
+                <div class="input-group-append">
+                    <span class="input-group-text">%</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-6">
+            <div class="input-group mb-3">
+                <div class="custom-file">
+                    <input type="file" class="custom-file-input" accept=".xlsx" id="inputXlsx" @ref=_inputElement @onchange="@HandleFileSelected" />
+                    <label class="custom-file-label" for="inputXlsx">Import stocks</label>
+                </div>
+            </div>
+        </div>
+        <div class="col-6">
+            <button class="btn btn-success btn-block" @onclick="DownloadReport">Download stock report</button>
+        </div>
+    </div>
+}
+
+
+@if (_loading)
+{
+    <p>Loading data...</p>
+}
+else if (_stocks != null)
+{
+    <table class="table table-sm table-responsive-sm table-bordered">
+        <thead>
+            <tr>
+                <th>Item name</th>
+                <th>On stock</th>
+                <th>Delivery</th>
+                <th>Total</th>
+                <th>Qty. per blade</th>
+                <th>Blades per week</th>
+                <th>Stock after</th>
+                <th>Stock date</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var stock in _stocks)
+            {
+                <tr>
+                    <td>@stock.ItemNumber</td>
+                    <td class="text-center">@stock.Qty</td>
+                    <td><input type="text" @bind="stock.DeliveryQty" /></td>
+                    <td class="text-center">@stock.TotalQty</td>
+                    <td class="text-center">@stock.QtyPerBlade</td>
+                    <td class="text-center">@_weeklyProduction</td>
+                    <td class="text-center @GetColor(stock.QtyPerBlade * _weeklyProduction, stock.QtyAfter)">@stock.QtyAfter</td>
+                    <td>@stock.Date.ToString("yyyy-MM-dd")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@_json
+
+
+@code {
+    [Parameter] public string Id { get; set; }
+
+    private Factory[] _factories;
+    private Week[] _weeks = new Week[0];
+    private bool _loading;
+    private int _selectedFactory;
+    private string _factoryName;
+    private bool _weeksInputDisabled = true;
+    private int _weeklyProduction;
+    private double _wasteValue = 20;
+    private double _wastePercent { get => _wasteValue / 100; }
+    private int _weekNo;
+    private string _json;
+
+    private Stock[] _stocks;
+    ElementReference _inputElement;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var factories = await stocksService.GetFactory().ConfigureAwait(false);
+        _factories = factories.ToArray();
+
+
+        if (!string.IsNullOrWhiteSpace(Id))
+        {
+            await FactoryChange(int.Parse(Id));
+        }
+    }
+
+    async Task OnFactoryChange(ChangeEventArgs args)
+    {
+        if (args.Value != null)
+        {
+            var valueParse = int.TryParse(args.Value.ToString(), out var value);
+            if (valueParse)
+            {
+                _loading = true;
+                await FactoryChange(Convert.ToInt32(args.Value)).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private string GetColor(int usage, int stockAfter)
+    {
+        if (stockAfter <= usage) return "text-danger";
+        if (stockAfter <= usage * (1 + _wastePercent)) return "text-warning";
+        return "";
+    }
+
+    async Task OnWeekChange(ChangeEventArgs args)
+    {
+        if (args.Value != null)
+        {
+            var valueParse = int.TryParse(args.Value.ToString(), out var value);
+            if (valueParse)
+            {
+                _weeklyProduction = await stocksService.GetWeeklyProduction(_selectedFactory, value).ConfigureAwait(false);
+                _weekNo = value;
+
+                foreach (var stock in _stocks)
+                {
+                    stock.CalculateQtyAfter(new Week{ WeekNo = _weekNo, BladeProduction = _weeklyProduction, FactoryId = _selectedFactory}, _wastePercent);
+                }
+            }
+        }
+    }
+
+    void OnWasteChange(ChangeEventArgs args)
+    {
+        if (_weeklyProduction == 0) return;
+
+        if (args.Value != null)
+        {
+            var valueParse = double.TryParse(args.Value.ToString(), out var value);
+            if (valueParse)
+            {
+                _wasteValue = value;
+                foreach (var stock in _stocks)
+                {
+                    stock.CalculateQtyAfter(new Week{ WeekNo = _weekNo, BladeProduction = _weeklyProduction, FactoryId = _selectedFactory}, _wastePercent);
+                }
+            }
+        }
+    }
+
+    private async Task FactoryChange(int id)
+    {
+        var weekNum = System.Globalization.CultureInfo.InvariantCulture.Calendar.GetWeekOfYear(DateTime.Now, System.Globalization.CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
+        var weeks = await stocksService.GetFactoryProduction(id).ConfigureAwait(false);
+        _weeks = weeks.ToArray();
+        _weeksInputDisabled = false;
+
+        var stocks = await stocksService.GetStocksInFactory(id).ConfigureAwait(false);
+        _stocks = stocks.ToArray();
+        _selectedFactory = id;
+        _factoryName = _factories.First(f => f.Id == _selectedFactory).Name;
+        _loading = false;
+        //StateHasChanged();
+    }
+
+    private async Task DownloadReport()
+    {
+        var report = new StockReport { Factory = _factoryName, ReportDate = DateTime.Now, Stocks = _stocks, WastePercent = _wastePercent, WeeklyBladeProduction = _weeklyProduction, WeekNumber = _weekNo };
+        var pdf = await stocksService.GeneratePdfReport(report).ConfigureAwait(false);
+        await FileUtil.SaveAs(js, "Report.pdf", pdf);
+    }
+
+    async Task HandleFileSelected()
+    {
+        var files = (await fileReaderService.CreateReference(_inputElement).EnumerateFilesAsync()).ToList();
+
+        if (files.Count() < 1)
+        {
+            return;
+        }
+
+        var file = files.FirstOrDefault();
+
+        if (file != null)
+        {
+            try
+            {
+                var fileInRam = await file.CreateMemoryStreamAsync(4096);
+
+                using (var package = new OfficeOpenXml.ExcelPackage(fileInRam))
+                {
+                    _stocks = EPPlusBuilder.ParseStocks(package, _selectedFactory).ToArray();
+                }
+
+                var response = await stocksService.PostStocks(_stocks).ConfigureAwait(false);
+                if (response.Status == ResponseStatus.Failure)
+                {
+                    toastService.ShowError(response.Reason);
+                }
+                else
+                {
+                    toastService.ShowSuccess("Stocks added to the server.");
+                }
+
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+        }
+    }
+}

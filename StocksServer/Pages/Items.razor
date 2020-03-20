@@ -1,0 +1,160 @@
+﻿@page "/items"
+
+@using Newtonsoft.Json
+@using StocksServer.Data
+@using Blazor.FileReader
+@using System.Text
+@using StocksServer.Repositories.Interfaces
+@using StocksServer.Services
+
+@inject IItemsRepository itemsRepository
+@inject IFileReaderService fileReaderService
+@inject IModalService Modal
+
+<h3>Items</h3>
+
+<div class="row">
+    <div class="col-10">
+        <div class="input-group mb-3">
+            <div class="custom-file">
+                <input type="file" class="custom-file-input" accept=".xlsx" id="inputXlsx" @ref=_inputElement @onchange="@HandleFileSelected" />
+                <label class="custom-file-label" for="inputXlsx">Import items</label>
+            </div>
+        </div>
+    </div>
+    <div class="col-2">
+        <div class="input-group mb-3">
+            <button class="btn btn-outline-secondary btn-block" @onclick="AddNewItem"><span class="oi oi-plus mr-2" aria-hidden="true"></span> Add new item</button>
+        </div>
+    </div>
+</div>
+
+
+@if (_items == null)
+{
+<p>Load items from excel</p>
+}
+else
+{
+<table class="table table-sm">
+    <thead>
+        <tr>
+            <th>Item number</th>
+            <th>Description</th>
+            <th>Quantity per blade</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var item in _items)
+            {
+        <tr>
+            <td>@item.ItemNumber</td>
+            <td>@item.ItemDescription</td>
+            <td>@item.QtyPerBlade</td>
+            <td>
+                <button @onclick="@(() => EditItem(item.ItemNumber))" class="btn btn-info">Edit item</button>
+                <button @onclick="@(() => DeleteItem(item.ItemNumber))" class="btn btn-danger">Delete item</button>
+            </td>
+        </tr>
+            }
+    </tbody>
+</table>
+}
+
+@code {
+    private Item[] _items;
+    ElementReference _inputElement;
+    private string _deletingItemNumber;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var items = await itemsRepository.GetItems().ConfigureAwait(false);
+        _items = items.ToArray();
+    }
+
+    async Task HandleFileSelected()
+    {
+        var files = (await fileReaderService.CreateReference(_inputElement).EnumerateFilesAsync()).ToList();
+
+        if (files.Count() < 1)
+        {
+            return;
+        }
+
+        var file = files.FirstOrDefault();
+
+        if (file != null)
+        {
+            try
+            {
+                var fileInRam = await file.CreateMemoryStreamAsync(4096);
+
+                using (var package = new OfficeOpenXml.ExcelPackage(fileInRam))
+                {
+                    _items = EPPlusBuilder.ParseItems(package).ToArray();
+                }
+                await itemsRepository.InsertItems(_items).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+        }
+    }
+
+    async Task DeleteItem(string itemNumber)
+    {
+        _deletingItemNumber = itemNumber;
+        Modal.OnClose += DeleteConfirmation;
+        Modal.Show<ConfirmationModal>("Delete item?");
+    }
+
+    async void DeleteConfirmation(ModalResult result)
+    {
+        if (result.Cancelled) return;
+        await itemsRepository.DeleteItem(_deletingItemNumber).ConfigureAwait(false);
+        var items = await itemsRepository.GetItems().ConfigureAwait(false);
+
+        InvokeAsync(() => {
+            _items = items.ToArray();
+            StateHasChanged();
+        });
+    }
+
+    void AddNewItem()
+    {
+        Modal.OnClose += ModalClosing;
+
+        var parameters = new ModalParameters();
+        parameters.Add("IsEditing", false);
+
+        Modal.Show<ItemEdit>("Add Item", parameters);
+    }
+
+    void EditItem(string itemNumber)
+    {
+        Modal.OnClose += ModalClosing;
+
+        var parameters = new ModalParameters();
+        parameters.Add("IsEditing", true);
+        parameters.Add("ItemNumber", itemNumber);
+
+        Modal.Show<ItemEdit>("Edit Item", parameters);
+    }
+
+    async void ModalClosing(ModalResult result)
+    {
+        if (result.Cancelled) return;
+
+        if (result.Data.GetType() == typeof(Item))
+        {
+            var items = await itemsRepository.GetItems().ConfigureAwait(false);
+
+            InvokeAsync(() => {
+                _items = items.ToArray();
+                StateHasChanged();
+            });
+        }
+    }
+}

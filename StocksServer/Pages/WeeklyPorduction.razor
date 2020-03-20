@@ -1,0 +1,217 @@
+﻿@page "/production"
+@page "/production/{id}"
+
+@using StocksServer.Data
+@using StocksServer.Repositories.Interfaces
+@using Blazor.FileReader
+@using StocksServer.Services
+
+@inject IWeeklyProductionRepository weeklyProductionRepository
+@inject IFactoryRepository factoryRepository
+@inject IFileReaderService fileReaderService
+@inject IModalService Modal
+
+<h3>Weekly Production in @_factoryName</h3>
+
+@if (_factories != null)
+{
+    <div class="input-group mb-3">
+        <div class="input-group-prepend">
+            <label class="input-group-text" for="inputGroupSelect01">Factory</label>
+        </div>
+        <select class="custom-select" id="inputGroupSelect01" @onchange="OnFactoryChange">
+            <option selected>Choose...</option>
+            @foreach (var factory in _factories)
+            {
+                <option value="@factory.Id">@factory.Name</option>
+            }
+        </select>
+    </div>
+
+    <div class="row">
+        <div class="col-10">
+            <div class="input-group mb-3">
+                <div class="custom-file">
+                    <input type="file" class="custom-file-input" accept=".xlsx" id="inputXlsx" @ref=_inputElement @onchange="@HandleFileSelected" />
+                    <label class="custom-file-label" for="inputXlsx">Import blade production</label>
+                </div>
+            </div>
+        </div>
+        <div class="col-2">
+            <div class="input-group mb-3">
+                <button class="btn btn-outline-secondary btn-block" @onclick="AddNewWeeklyProduction"><span class="oi oi-plus mr-2" aria-hidden="true"></span> Add new item</button>
+            </div>
+        </div>
+    </div>
+
+}
+
+@if (_loading)
+{
+    <p>Loading data...</p>
+}
+else if (_weeks != null)
+{
+    <table class="table table-sm table-responsive table-bordered">
+        <thead>
+            <tr>
+                <td>Week number</td>
+                <td>Blade production</td>
+                <td></td>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var week in _weeks)
+            {
+                <tr>
+                    <td>@week.WeekNo</td>
+                    <td>@week.BladeProduction</td>
+                    <td>
+                        <button class="btn btn-info" @onclick="(() => EditProduction(week.WeekNo, week.FactoryId))">Edit production</button>
+                        <button class="btn btn-danger" @onclick="(() => DeleteProduction(week.WeekNo, week.FactoryId))">Delete production</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+
+
+@code {
+    [Parameter]
+    public string Id { get; set; }
+
+    private Week[] _weeks;
+    private Factory[] _factories;
+    private bool _loading;
+    private int _selectedFactory;
+    private string _factoryName;
+    private int _weekNoToDelete;
+    private int _factoryIdToDelete;
+
+    ElementReference _inputElement;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var factories = await factoryRepository.GetFactories().ConfigureAwait(false);
+        _factories = factories.ToArray();
+
+        if (!string.IsNullOrWhiteSpace(Id))
+        {
+            await FactoryChange(int.Parse(Id));
+        }
+    }
+
+    async Task OnFactoryChange(ChangeEventArgs args)
+    {
+        if (args.Value != null)
+        {
+            var valueParse = int.TryParse(args.Value.ToString(), out var value);
+            if (valueParse)
+            {
+                _loading = true;
+                await FactoryChange(Convert.ToInt32(args.Value));
+            }
+        }
+    }
+
+    private async Task FactoryChange(int id)
+    {
+        var weeks = await weeklyProductionRepository.GetFactoryProduction(id).ConfigureAwait(false);
+        _weeks = weeks.ToArray();
+        _selectedFactory = id;
+        _factoryName = _factories.First(f => f.Id == _selectedFactory).Name;
+        _loading = false;
+    }
+
+    void AddNewWeeklyProduction()
+    {
+        Modal.OnClose += ModalClosing;
+
+        var parameters = new ModalParameters();
+        parameters.Add("IsEditing", false);
+        parameters.Add("FactoryId", _selectedFactory);
+
+        Modal.Show<WeeklyProductionEdit>("Add Item", parameters);
+    }
+
+    void EditProduction(int weekNumber, int factoryId)
+    {
+        Modal.OnClose += ModalClosing;
+
+        var parameters = new ModalParameters();
+        parameters.Add("IsEditing", true);
+        parameters.Add("WeekNumber", weekNumber);
+        parameters.Add("FactoryId", factoryId);
+
+        Modal.Show<WeeklyProductionEdit>("Edit Item", parameters);
+    }
+
+    async void ModalClosing(ModalResult result)
+    {
+        if (result.Cancelled) return;
+
+        if (result.Data.GetType() == typeof(Week))
+        {
+            var weeks = await weeklyProductionRepository.GetFactoryProduction(_selectedFactory).ConfigureAwait(false);
+
+            InvokeAsync(() =>
+            {
+                _weeks = weeks.ToArray();
+                StateHasChanged();
+            });
+        }
+    }
+
+    async Task DeleteProduction(int weekNumber, int factoryId)
+    {
+        _weekNoToDelete = weekNumber;
+        _factoryIdToDelete = factoryId;
+        Modal.OnClose += DeleteConfirmation;
+        Modal.Show<ConfirmationModal>("Delete production?");
+    }
+
+    async void DeleteConfirmation(ModalResult result)
+    {
+        if (result.Cancelled) return;
+        await weeklyProductionRepository.DeleteFactoryProduction(_weekNoToDelete, _factoryIdToDelete).ConfigureAwait(false);
+        var weeks = await weeklyProductionRepository.GetFactoryProduction(_selectedFactory).ConfigureAwait(false);
+
+        InvokeAsync(() =>
+        {
+            _weeks = weeks.ToArray();
+            StateHasChanged();
+        });
+    }
+
+    async Task HandleFileSelected()
+    {
+        var files = (await fileReaderService.CreateReference(_inputElement).EnumerateFilesAsync()).ToList();
+
+        if (files.Count() < 1)
+        {
+            return;
+        }
+
+        var file = files.FirstOrDefault();
+
+        if (file != null)
+        {
+            try
+            {
+                var fileInRam = await file.CreateMemoryStreamAsync(4096);
+
+                using (var package = new OfficeOpenXml.ExcelPackage(fileInRam))
+                {
+                    _weeks = EPPlusBuilder.ParseProduction(package, _selectedFactory).ToArray();
+                    await weeklyProductionRepository.InsertFactoryProduction(_weeks).ConfigureAwait(false);
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+        }
+    }
+}

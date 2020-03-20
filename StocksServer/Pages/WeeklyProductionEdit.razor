@@ -1,0 +1,94 @@
+﻿@using StocksServer.Data
+@using StocksServer.Repositories.Interfaces
+
+@inject IWeeklyProductionRepository weeklyProductionRepository
+@inject IModalService ModalService
+
+@if (_week != null)
+{
+    <p class="text-danger text-center">@_result</p>
+    <EditForm Model="_week" OnValidSubmit="SaveChanges">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="form-row">
+            <div class="col">
+                <div class="form-group">
+                    <label>Week number</label>
+                    <input @bind="@_week.WeekNo" type="number" min="1" max="53" class="form-control" disabled="@(_isEditing)" />
+                </div>
+                <div class="form-group">
+                    <label>Blade production</label>
+                    <input @bind="@_week.BladeProduction" type="number" min="0" class="form-control" />
+                </div>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary mr-3">Submit</button>
+        <button @onclick="@Cancel" type="button" class="btn btn-secondary">Cancel</button>
+    </EditForm>
+}
+
+@code {
+
+    [CascadingParameter] ModalParameters Parameters { get; set; }
+
+    int _weekNumber;
+    int _factoryId;
+    Week _week;
+    string _result;
+    bool _isEditing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isEditing = Parameters.Get<bool>("IsEditing");
+        if (_isEditing)
+        {
+            _weekNumber = Parameters.Get<int>("WeekNumber");
+            _factoryId = Parameters.Get<int>("FactoryId");
+            _week = await weeklyProductionRepository.GetWeek(_weekNumber, _factoryId).ConfigureAwait(false);
+        }
+        else
+        {
+            _factoryId = Parameters.Get<int>("FactoryId");
+            _week = new Week{ FactoryId = _factoryId };
+        }
+    }
+
+    async Task SaveChanges()
+    {
+        bool result;
+        if (_isEditing)
+        {
+            result = await weeklyProductionRepository.UpdateFactoryProduction(_week).ConfigureAwait(false);
+        }
+        else
+        {
+            var weeks = await weeklyProductionRepository.GetFactoryProduction(_factoryId).ConfigureAwait(false);
+            var existingWeek = weeks.FirstOrDefault(s => s.WeekNo == _week.WeekNo);
+
+            if (existingWeek == null)
+            {
+                result = await weeklyProductionRepository.InsertFactoryProduction(_week).ConfigureAwait(false);
+                if (result)
+                {
+                    ModalService.Close(ModalResult.Ok<Week>(_week));
+                }
+                else
+                {
+                    _result = "Could not update factory";
+                }
+            }
+            else
+            {
+                _result = "There is already production on that week, update that week or delete the old one before adding a new one.";
+            }
+
+        }
+    }
+
+    void Cancel()
+    {
+        ModalService.Cancel();
+    }
+
+}
